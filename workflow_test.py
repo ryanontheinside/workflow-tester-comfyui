@@ -1,6 +1,5 @@
 import json
 import urllib.request
-import websocket
 import time
 import io
 import os
@@ -343,7 +342,7 @@ def create_zip_archive(output_dir, timestamp):
     
     return final_zip_path
 
-def upload_image(image_path, config, overwrite=False):
+def upload_image(image_path, filename, config, overwrite=False):
     # Read the image file
     with open(image_path, 'rb') as f:
         image_data = f.read()
@@ -357,7 +356,7 @@ def upload_image(image_path, config, overwrite=False):
     # Create the multipart form data
     data = []
     data.append(f'--{boundary}'.encode())
-    data.append(b'Content-Disposition: form-data; name="image"; filename="input.png"')
+    data.append(f'Content-Disposition: form-data; name="image"; filename="{filename}"'.encode())
     data.append(b'Content-Type: image/png')
     data.append(b'')
     data.append(image_data)
@@ -435,31 +434,47 @@ def load_workflow(filename, config):
     with open(workflow_path, 'r') as f:
         return json.load(f)
 
-def update_workflow_with_image(workflow, image_name):
-    # Find the LoadImage node and update its inputs
+def update_workflow_with_image(workflow, image_name, prev_frame_name):
+    # Update both current frame and previous frame LoadImage nodes
     for node_id, node_data in workflow.items():
         if node_data.get('class_type') == 'LoadImage':
-            node_data['inputs'] = {
-                "image": image_name,
-                "upload": "true"
-            }
-            break
+            # Check the node's title to determine which image to update
+            title = node_data.get('_meta', {}).get('title', '')
+            if title == 'Load Image':
+                # Update current frame
+                node_data['inputs'] = {
+                    "image": image_name,
+                    "upload": "true"
+                }
+            elif title == 'Load Image (Prev)' and prev_frame_name:
+                # Update previous frame if provided
+                node_data['inputs'] = {
+                    "image": prev_frame_name,
+                    "upload": "true"
+                }
     return workflow
 
-def process_workflow(workflow_file, image_path, output_dir, config):
+def process_workflow(workflow_file, image_path, prev_frame_path, output_dir, config):
     print(f"\nProcessing workflow: {workflow_file}")
     print(f"Using image: {image_path}")
+    print(f"Using previous frame: {prev_frame_path}")
     
     # Load and update workflow
     prompt = load_workflow(workflow_file, config)
     
     # Upload image with overwrite=True to ensure we're using the latest version
-    upload_result = upload_image(image_path, config, overwrite=True)
+    upload_result = upload_image(image_path, "current_frame.png", config, overwrite=True)
     image_name = upload_result['name']
     print(f"Image uploaded successfully: {image_name}")
+
+    prev_frame_name = None
+    if prev_frame_path:
+        upload_result = upload_image(prev_frame_path, "prev_frame.png", config, overwrite=True)
+        prev_frame_name = upload_result['name']
+        print(f"Previous frame uploaded successfully: {prev_frame_name}")
     
     # Update workflow with uploaded image
-    prompt = update_workflow_with_image(prompt, image_name)
+    prompt = update_workflow_with_image(prompt, image_name, prev_frame_name)
     
     # Process workflow
     images = get_images(prompt, config)
@@ -552,8 +567,23 @@ def process_video(workflow_file, video_path, output_dir, config):
         
         # Process each frame
         print("Processing frames through workflow...")
-        for frame_path in tqdm(frames):
-            output_path = process_workflow(workflow_file, frame_path, output_dir, config)
+        prev_frame_path = None  # Initialize previous frame path
+        for i, frame_path in enumerate(tqdm(frames)):
+            # For the first frame, create a black frame with same dimensions
+            if i == 0:
+                # Read first frame to get dimensions
+                first_frame = cv2.imread(frame_path)
+                height, width = first_frame.shape[:2]
+                # Create black frame
+                black_frame = np.zeros((height, width, 3), dtype=np.uint8)
+                black_frame_path = os.path.join(temp_dir, "black_frame.png")
+                cv2.imwrite(black_frame_path, black_frame)
+                prev_frame_path = black_frame_path
+            else:
+                # Use the previous raw frame
+                prev_frame_path = frames[i-1]
+
+            output_path = process_workflow(workflow_file, frame_path, prev_frame_path, output_dir, config)
             if output_path:
                 processed_frames.append(output_path)
         
@@ -695,6 +725,9 @@ def main():
         # Separate images and videos
         input_images = [f for f in input_files if not is_video_file(f)]
         input_videos = [f for f in input_files if is_video_file(f)]
+
+        print(f"Input images: {input_images}")
+        print(f"Input videos: {input_videos}")
         
         # Copy input images and videos to the inputs subdirectory
         input_copies = copy_input_images(input_images + input_videos, output_dir, config)
@@ -703,14 +736,18 @@ def main():
         all_output_paths = []
         all_video_paths = []
         workflow_names = []
+
+        print(f"Workflow files: {workflow_files}")
         
         for workflow_file in workflow_files:
             workflow_name = os.path.basename(workflow_file)
             workflow_names.append(workflow_name)
+
+            print(f"Processing workflow: {workflow_name}")
             
             # Process images
             for image_path in input_images:
-                output_path = process_workflow(workflow_name, image_path, output_dir, config)
+                output_path = process_workflow(workflow_name, image_path, None, output_dir, config)
                 if output_path:
                     all_output_paths.append(output_path)
             

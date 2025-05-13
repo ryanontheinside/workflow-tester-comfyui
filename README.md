@@ -2,11 +2,14 @@
 
 A testing utility for comparing different ComfyUI workflows across multiple inputs. The tool supports processing both images and videos through multiple workflows and generates visual comparisons of the results.
 
-Currently supports workflows that take a single image as input.
+Currently supports:
+- One single "Load Image" input node,
+- Two "Load Image" input nodes with the titles "Load Image" and "Load Image (Prev)" (for video only).
 
 ## Features
 
-- Support for both image and video inputs
+- Support for both image and video inputs ("Load Image" as title)
+- Support for previous frame as optional input ("Load Image (Prev)" as title)
 - Generate comparison grids for image results
 - Create HTML tables for easy result visualization
 - Support for video frame extraction and reconstruction
@@ -88,6 +91,7 @@ The script creates a new timestamped directory for each test run under `output_i
 - Video outputs are saved individually in the output directory
 - Currently only supports workflows that take a single image as input
 - To adapt for different workflow systems, modify the workflow loading and processing functions 
+- To use the previous frame feature, set a secondary LoadImage node with the title `Load Image (Prev)`. The previous input frame will be appended to that node.
 
 # Example
 ![Image](https://github.com/user-attachments/assets/3bce229a-0abc-4b4c-b237-da9cab41c6eb)
