@@ -54,6 +54,8 @@ The `config.yaml` file allows you to customize various aspects of the testing pr
 
 ### Video Processing Configuration
 
+You can use the --video-only argument to only process videos in the input folder, and skip the report generation. 
+
 The video processing section in `config.yaml` allows fine control over how videos are processed:
 
 ```yaml
@@ -87,13 +89,28 @@ Key settings to understand:
 3. Place your test images/videos in the `input_images` directory
 4. Run the test script:
 ```bash
-python workflow_test.py
+python workflow_test.py --config config.yaml
 ```
 
-You can also specify a different config file:
+### Command Line Options
+
+The script supports several command line options:
+
 ```bash
-python workflow_test.py --config custom_config.yaml
+# Process both images and videos (default behavior)
+python workflow_test.py --config config.yaml
+
+# Only process videos, skipping image processing and report generation
+python workflow_test.py --config config.yaml --video-only
+
+# Only generate HTML report from existing output directory
+python workflow_test.py --config config.yaml --html-only --output-dir path/to/output
 ```
+
+- `--config`: Specify the configuration file path
+- `--video-only`: Process only video files, skip image processing and report generation
+- `--html-only`: Only generate an HTML report from an existing output directory
+- `--output-dir`: Specify output directory for HTML-only mode
 
 ### Supported File Types
 
