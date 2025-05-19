@@ -29,7 +29,7 @@ image:
 
 # Workflow settings
 workflow:
-  pattern: "FLP_TEST*.json"  # Pattern to match workflow files
+  pattern: "*.json"  # Pattern to match workflow files
   batch_size: 1  # Number of images to process in parallel
 
 # Output settings
