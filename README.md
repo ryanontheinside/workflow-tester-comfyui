@@ -13,6 +13,7 @@ Currently supports workflows that take a single image as input.
 - Automatic output organization with timestamped directories
 - Configurable settings via YAML
 - Intelligent FPS adjustment for video processing
+- Support for Base64 image loading for faster workflow execution
 
 ## Directory Structure
 
@@ -81,6 +82,25 @@ Key settings to understand:
   
 - **max_frames**: Limits the total number of frames processed from each video
   - Useful for testing with longer videos without processing the entire file
+
+## Workflow Types Support
+
+### Base64 Image Loading (Fast Method)
+
+The tool now automatically detects workflows that use `LoadImageB64` or `LoadImageBase64` nodes, and will:
+
+1. Convert input images directly to base64-encoded strings
+2. Include the encoded image data directly in the workflow JSON
+3. Send the workflow to ComfyUI without separate image upload steps
+
+This method can be faster when executing this over network. 
+
+The base64 image loader can be found in https://github.com/ryanontheinside/ComfyUI_RealtimeNodes 
+
+To take advantage of this optimization:
+- Replace standard `LoadImage` nodes with `LoadImageB64` nodes in your workflows
+- The tool will automatically detect these nodes and use the faster method
+- The standard image upload method will still be used as a fallback for workflows with regular `LoadImage` nodes
 
 ## Usage
 

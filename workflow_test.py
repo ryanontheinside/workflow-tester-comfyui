@@ -15,6 +15,7 @@ import yaml
 import argparse
 import sys
 import shutil
+import base64
 
 def load_config(config_path):
     """Load configuration from YAML file."""
@@ -468,7 +469,20 @@ def load_workflow(filename, config):
     with open(workflow_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
+def has_load_image_base64_node(workflow):
+    """Check if workflow contains a LoadImageB64 node."""
+    for node_id, node_data in workflow.items():
+        if node_data.get('class_type') in ['LoadImageB64', 'LoadImageBase64']:
+            return True, node_id
+    return False, None
+
+def image_to_base64(image_path):
+    """Convert an image file to base64 encoding."""
+    with open(image_path, 'rb') as img_file:
+        return base64.b64encode(img_file.read()).decode('utf-8')
+
 def update_workflow_with_image(workflow, image_name):
+    """Update workflow with uploaded image name."""
     # Find the LoadImage node and update its inputs
     for node_id, node_data in workflow.items():
         if node_data.get('class_type') == 'LoadImage':
@@ -479,20 +493,37 @@ def update_workflow_with_image(workflow, image_name):
             break
     return workflow
 
+def update_workflow_with_base64_image(workflow, image_path, base64_node_id):
+    """Update workflow with base64 encoded image data."""
+    # Convert image to base64
+    base64_data = image_to_base64(image_path)
+    
+    # Update the LoadImageB64 node
+    workflow[base64_node_id]['inputs']['image'] = base64_data
+    return workflow
+
 def process_workflow(workflow_file, image_path, output_dir, config):
     print(f"\nProcessing workflow: {workflow_file}")
     print(f"Using image: {image_path}")
     
-    # Load and update workflow
+    # Load workflow
     prompt = load_workflow(workflow_file, config)
     
-    # Upload image with overwrite=True to ensure we're using the latest version
-    upload_result = upload_image(image_path, config, overwrite=True)
-    image_name = upload_result['name']
-    print(f"Image uploaded successfully: {image_name}")
+    # Check if workflow uses base64 image loading
+    uses_base64, base64_node_id = has_load_image_base64_node(prompt)
     
-    # Update workflow with uploaded image
-    prompt = update_workflow_with_image(prompt, image_name)
+    if uses_base64:
+        print(f"Workflow uses base64 image loading - encoding image directly in prompt")
+        # Update workflow with base64 encoded image
+        prompt = update_workflow_with_base64_image(prompt, image_path, base64_node_id)
+    else:
+        # Upload image with overwrite=True to ensure we're using the latest version
+        upload_result = upload_image(image_path, config, overwrite=True)
+        image_name = upload_result['name']
+        print(f"Image uploaded successfully: {image_name}")
+        
+        # Update workflow with uploaded image
+        prompt = update_workflow_with_image(prompt, image_name)
     
     # Process workflow
     images = get_images(prompt, config)
