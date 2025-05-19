@@ -344,95 +344,128 @@ def create_zip_archive(output_dir, timestamp):
     return final_zip_path
 
 def upload_image(image_path, config, overwrite=False):
-    # Read the image file
-    with open(image_path, 'rb') as f:
-        image_data = f.read()
-    
-    # Create a simple multipart form request
-    boundary = '----WebKitFormBoundary'
-    headers = {
-        'Content-Type': f'multipart/form-data; boundary={boundary}'
-    }
-    
-    # Create the multipart form data
-    data = []
-    data.append(f'--{boundary}'.encode())
-    data.append(b'Content-Disposition: form-data; name="image"; filename="input.png"')
-    data.append(b'Content-Type: image/png')
-    data.append(b'')
-    data.append(image_data)
-    data.append(f'--{boundary}'.encode())
-    data.append(b'Content-Disposition: form-data; name="overwrite"')
-    data.append(b'')
-    data.append(str(overwrite).lower().encode())
-    data.append(f'--{boundary}--'.encode())
-    
-    # Join the data with newlines
-    body = b'\r\n'.join(data)
-    
-    # Create and send the request
-    req = urllib.request.Request(
-        f"{config['server']['url']}/upload/image",
-        data=body,
-        headers=headers,
-        method='POST'
-    )
-    
     try:
+        # Read the image file
+        with open(image_path, 'rb') as f:
+            image_data = f.read()
+        
+        # Create a simple multipart form request
+        boundary = '----WebKitFormBoundary'
+        headers = {
+            'Content-Type': f'multipart/form-data; boundary={boundary}'
+        }
+        
+        # Create the multipart form data
+        data = []
+        data.append(f'--{boundary}'.encode())
+        data.append(b'Content-Disposition: form-data; name="image"; filename="input.png"')
+        data.append(b'Content-Type: image/png')
+        data.append(b'')
+        data.append(image_data)
+        data.append(f'--{boundary}'.encode())
+        data.append(b'Content-Disposition: form-data; name="overwrite"')
+        data.append(b'')
+        data.append(str(overwrite).lower().encode())
+        data.append(f'--{boundary}--'.encode())
+        
+        # Join the data with newlines
+        body = b'\r\n'.join(data)
+        
+        # Create and send the request
+        print(f"Uploading image to ComfyUI server: {os.path.basename(image_path)}")
+        req = urllib.request.Request(
+            f"{config['server']['url']}/upload/image",
+            data=body,
+            headers=headers,
+            method='POST'
+        )
+        
         response = urllib.request.urlopen(req, timeout=config['server']['timeout'])
         return json.loads(response.read())
     except urllib.error.HTTPError as e:
-        print(f"Error uploading image: {e}")
+        print(f"ERROR in upload_image: HTTP error {e.code} - {e.reason}")
         print(f"Response: {e.read().decode()}")
+        raise
+    except Exception as e:
+        print(f"ERROR in upload_image: Failed to upload image: {str(e)}")
+        print(f"Check that ComfyUI is running at {config['server']['url']}")
         raise
 
 def queue_prompt(prompt, config):
-    p = {"prompt": prompt}
-    data = json.dumps(p).encode('utf-8')
-    req = urllib.request.Request(f"{config['server']['url']}/prompt", data=data)
-    response = urllib.request.urlopen(req, timeout=config['server']['timeout'])
-    return json.loads(response.read())
+    try:
+        p = {"prompt": prompt}
+        data = json.dumps(p).encode('utf-8')
+        print(f"Sending prompt to ComfyUI server at {config['server']['url']}")
+        req = urllib.request.Request(f"{config['server']['url']}/prompt", data=data)
+        response = urllib.request.urlopen(req, timeout=config['server']['timeout'])
+        return json.loads(response.read())
+    except Exception as e:
+        print(f"ERROR in queue_prompt: Unable to connect to ComfyUI server: {str(e)}")
+        print(f"Check that ComfyUI is running at {config['server']['url']}")
+        raise
 
 def get_image(filename, subfolder, folder_type, config):
-    data = {"filename": filename, "subfolder": subfolder, "type": folder_type}
-    url_values = urllib.parse.urlencode(data)
-    with urllib.request.urlopen(f"{config['server']['url']}/view?{url_values}", timeout=config['server']['timeout']) as response:
-        return response.read()
+    try:
+        data = {"filename": filename, "subfolder": subfolder, "type": folder_type}
+        url_values = urllib.parse.urlencode(data)
+        with urllib.request.urlopen(f"{config['server']['url']}/view?{url_values}", timeout=config['server']['timeout']) as response:
+            return response.read()
+    except Exception as e:
+        print(f"ERROR in get_image: Unable to retrieve image from server: {str(e)}")
+        raise
 
 def get_history(prompt_id, config):
-    with urllib.request.urlopen(f"{config['server']['url']}/history/{prompt_id}", timeout=config['server']['timeout']) as response:
-        return json.loads(response.read())
+    try:
+        with urllib.request.urlopen(f"{config['server']['url']}/history/{prompt_id}", timeout=config['server']['timeout']) as response:
+            return json.loads(response.read())
+    except Exception as e:
+        print(f"ERROR in get_history: Unable to retrieve history from server: {str(e)}")
+        raise
 
 def get_images(prompt, config):
     # Queue the prompt
-    prompt_id = queue_prompt(prompt, config)['prompt_id']
-    print(f"Prompt queued with ID: {prompt_id}")
-    
-    # Wait for the execution to complete
-    while True:
-        history = get_history(prompt_id, config)
-        if prompt_id in history:
-            break
-        time.sleep(0.1)
-    
-    # Get the output images
-    output_images = {}
-    history = history[prompt_id]
-    
-    for node_id in history['outputs']:
-        node_output = history['outputs'][node_id]
-        if 'images' in node_output:
-            images_output = []
-            for image in node_output['images']:
-                image_data = get_image(image['filename'], image['subfolder'], image['type'], config)
-                images_output.append(image_data)
-            output_images[node_id] = images_output
-    
-    return output_images
+    try:
+        prompt_id = queue_prompt(prompt, config)['prompt_id']
+        print(f"Prompt queued with ID: {prompt_id}")
+        
+        # Wait for the execution to complete
+        print("Waiting for ComfyUI to process prompt...")
+        progress_count = 0
+        while True:
+            try:
+                history = get_history(prompt_id, config)
+                if prompt_id in history:
+                    break
+                progress_count += 1
+                if progress_count % 20 == 0:  # Show progress every 2 seconds
+                    print(".", end="", flush=True)
+                time.sleep(0.1)
+            except Exception as e:
+                print(f"\nError checking prompt status: {str(e)}")
+                time.sleep(1)
+        print(" Done!")
+        
+        # Get the output images
+        output_images = {}
+        history = history[prompt_id]
+        
+        for node_id in history['outputs']:
+            node_output = history['outputs'][node_id]
+            if 'images' in node_output:
+                images_output = []
+                for image in node_output['images']:
+                    image_data = get_image(image['filename'], image['subfolder'], image['type'], config)
+                    images_output.append(image_data)
+                output_images[node_id] = images_output
+        
+        return output_images
+    except Exception as e:
+        print(f"ERROR in get_images: {str(e)}")
+        return {}
 
 def load_workflow(filename, config):
     workflow_path = os.path.join(config['directories']['workflows'], filename)
-    with open(workflow_path, 'r') as f:
+    with open(workflow_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 def update_workflow_with_image(workflow, image_name):
@@ -488,46 +521,86 @@ def process_workflow(workflow_file, image_path, output_dir, config):
 
 def extract_frames(video_path, temp_dir, config):
     """Extract frames from video file."""
+    print(f"Opening video file: {video_path}")
+    if not os.path.exists(video_path):
+        print(f"ERROR: Video file does not exist: {video_path}")
+        return [], 0
+        
     cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"ERROR: Could not open video file: {video_path}")
+        return [], 0
+        
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    
+    print(f"Video details: {width}x{height}, {fps} FPS, {total_frames} frames")
+    
+    if total_frames <= 0:
+        print(f"ERROR: Video has no frames or couldn't determine frame count")
+        cap.release()
+        return [], 0
     
     # Skip the specified number of frames at the start
     skip_frames = config['video'].get('skip_first_frames', 0)
-    for _ in range(skip_frames):
-        cap.read()
-    total_frames = max(0, total_frames - skip_frames)
+    if skip_frames > 0:
+        print(f"Skipping first {skip_frames} frames")
+        for _ in range(skip_frames):
+            ret = cap.read()[0]
+            if not ret:
+                print("ERROR: Failed to skip frames - video may be corrupt")
+                cap.release()
+                return [], 0
+                
+    remaining_frames = max(0, total_frames - skip_frames)
     
     # Calculate how many frames to process
     select_every_n = config['video']['select_every_n']
     max_frames = config['video']['max_frames']
-    frames_to_process = min(total_frames // select_every_n, max_frames)
+    frames_to_process = min(remaining_frames // select_every_n, max_frames)
+    
+    print(f"Selecting {frames_to_process} frames (every {select_every_n} frames, max {max_frames})")
     
     if frames_to_process <= 0:
-        print(f"Warning: No frames to process in video {video_path} after skipping {skip_frames} frames")
+        print(f"ERROR: No frames to process in video {video_path} after skipping {skip_frames} frames")
         cap.release()
         return [], 0
     
     frame_paths = []
-    with tqdm(total=frames_to_process, desc="Extracting frames") as pbar:
-        frame_count = 0
-        processed_count = 0
-        
-        while frame_count < total_frames and processed_count < frames_to_process:
-            ret, frame = cap.read()
-            if not ret:
-                break
-                
-            if frame_count % select_every_n == 0:
-                frame_path = os.path.join(temp_dir, f"frame_{processed_count:04d}.png")
-                cv2.imwrite(frame_path, frame)
-                frame_paths.append(frame_path)
-                processed_count += 1
-                pbar.update(1)
+    try:
+        with tqdm(total=frames_to_process, desc="Extracting frames") as pbar:
+            frame_count = 0
+            processed_count = 0
             
-            frame_count += 1
+            while frame_count < remaining_frames and processed_count < frames_to_process:
+                ret, frame = cap.read()
+                if not ret:
+                    print(f"WARNING: Reached end of video at frame {frame_count}/{remaining_frames}")
+                    break
+                    
+                if frame_count % select_every_n == 0:
+                    frame_path = os.path.join(temp_dir, f"frame_{processed_count:04d}.png")
+                    if cv2.imwrite(frame_path, frame):
+                        frame_paths.append(frame_path)
+                        processed_count += 1
+                        pbar.update(1)
+                    else:
+                        print(f"ERROR: Failed to write frame to {frame_path}")
+                
+                frame_count += 1
+                
+        if not frame_paths:
+            print(f"ERROR: Failed to extract any frames from video")
+    except Exception as e:
+        print(f"ERROR during frame extraction: {str(e)}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        cap.release()
     
-    cap.release()
+    print(f"Successfully extracted {len(frame_paths)} frames out of {frames_to_process} planned")
     return frame_paths, fps
 
 def process_video(workflow_file, video_path, output_dir, config):
@@ -541,21 +614,30 @@ def process_video(workflow_file, video_path, output_dir, config):
     
     try:
         # Extract frames and get original FPS
+        print(f"Extracting frames from video...")
         frames, original_fps = extract_frames(video_path, temp_dir, config)
         processed_frames = []
         
         if not frames:
-            print(f"No frames extracted from {video_path}")
+            print(f"ERROR: No frames extracted from {video_path}")
+            print(f"Check if the video file is valid and readable.")
             return None
             
-        print(f"Source video has {original_fps} FPS")
+        print(f"Successfully extracted {len(frames)} frames from source video with {original_fps} FPS")
         
         # Process each frame
         print("Processing frames through workflow...")
-        for frame_path in tqdm(frames):
-            output_path = process_workflow(workflow_file, frame_path, output_dir, config)
-            if output_path:
-                processed_frames.append(output_path)
+        for i, frame_path in enumerate(tqdm(frames)):
+            try:
+                output_path = process_workflow(workflow_file, frame_path, output_dir, config)
+                if output_path:
+                    processed_frames.append(output_path)
+                else:
+                    print(f"  Warning: Frame {i} processing returned no output")
+            except Exception as e:
+                print(f"  Error processing frame {i}: {str(e)}")
+        
+        print(f"Successfully processed {len(processed_frames)}/{len(frames)} frames")
         
         # Create output video
         if processed_frames:
@@ -596,11 +678,14 @@ def process_video(workflow_file, video_path, output_dir, config):
                     print(f"Video saved as {output_filename} ({os.path.getsize(output_video_path)} bytes)")
                     return output_video_path
                 else:
-                    print(f"Error: Failed to create video file {output_filename}")
+                    print(f"ERROR: Failed to create video file {output_filename}")
                     return None
             except Exception as e:
-                print(f"Error creating video: {str(e)}")
+                print(f"ERROR creating video: {str(e)}")
                 return None
+        else:
+            print("ERROR: No processed frames available to create output video")
+            return None
     
     finally:
         # Clean up temporary directory
@@ -622,10 +707,26 @@ def main():
     parser.add_argument('--config', required=True, help='Path to configuration file')
     parser.add_argument('--html-only', action='store_true', help='Only generate HTML report from existing output directory')
     parser.add_argument('--output-dir', help='Specify output directory for HTML-only mode')
+    parser.add_argument('--video-only', action='store_true', help='Only process videos without creating comparison grids or HTML reports')
     args = parser.parse_args()
     
     # Load configuration
     config = load_config(args.config)
+    
+    # Print server information
+    print(f"ComfyUI server: {config['server']['url']}")
+    print(f"Timeout: {config['server']['timeout']} seconds")
+    
+    # Test server connection
+    try:
+        print(f"Testing connection to ComfyUI server...")
+        urllib.request.urlopen(f"{config['server']['url']}", timeout=config['server']['timeout'])
+        print(f"✓ Successfully connected to ComfyUI server")
+    except Exception as e:
+        print(f"✗ ERROR: Could not connect to ComfyUI server at {config['server']['url']}")
+        print(f"  Error details: {str(e)}")
+        print(f"  Make sure ComfyUI is running before using this tool.")
+        return
     
     if args.html_only:
         # HTML-only mode
@@ -684,6 +785,12 @@ def main():
         # Get all workflow files
         workflow_files = glob.glob(os.path.join(config['directories']['workflows'], config['workflow']['pattern']))
         workflow_files.sort()
+        print(f"Found {len(workflow_files)} workflow files: {', '.join([os.path.basename(f) for f in workflow_files])}")
+        
+        if len(workflow_files) == 0:
+            print(f"ERROR: No workflow files found in {config['directories']['workflows']} matching pattern {config['workflow']['pattern']}")
+            print(f"Please check that your workflows directory exists and contains valid workflow files.")
+            return
         
         # Copy workflow files to the workflows subdirectory
         workflow_copies = copy_workflow_files(workflow_files, output_dir, config)
@@ -695,9 +802,20 @@ def main():
         # Separate images and videos
         input_images = [f for f in input_files if not is_video_file(f)]
         input_videos = [f for f in input_files if is_video_file(f)]
+        print(f"Found {len(input_images)} image files and {len(input_videos)} video files in {config['directories']['input_images']}")
+        
+        if args.video_only and len(input_videos) == 0:
+            print(f"ERROR: --video-only specified but no video files found in {config['directories']['input_images']}")
+            print(f"Supported video formats: mp4, avi, mov, mkv, webm")
+            return
         
         # Copy input images and videos to the inputs subdirectory
-        input_copies = copy_input_images(input_images + input_videos, output_dir, config)
+        if args.video_only:
+            # Only copy videos if video-only mode is selected
+            print(f"Video-only mode: skipping images, processing only videos")
+            input_copies = copy_input_images(input_videos, output_dir, config)
+        else:
+            input_copies = copy_input_images(input_images + input_videos, output_dir, config)
         
         # Process each workflow with each image/video
         all_output_paths = []
@@ -708,29 +826,57 @@ def main():
             workflow_name = os.path.basename(workflow_file)
             workflow_names.append(workflow_name)
             
-            # Process images
-            for image_path in input_images:
-                output_path = process_workflow(workflow_name, image_path, output_dir, config)
-                if output_path:
-                    all_output_paths.append(output_path)
+            # Process images (skip if video-only mode is selected)
+            if not args.video_only and input_images:
+                for image_path in input_images:
+                    output_path = process_workflow(workflow_name, image_path, output_dir, config)
+                    if output_path:
+                        all_output_paths.append(output_path)
             
             # Process videos
             for video_path in input_videos:
-                output_path = process_video(workflow_name, video_path, output_dir, config)
-                if output_path:
-                    all_video_paths.append(output_path)
-                    print(f"Video processing complete: {output_path}")
+                print(f"\n=====================================")
+                print(f"Processing video: {os.path.basename(video_path)}")
+                print(f"Using workflow: {workflow_name}")
+                print(f"=====================================")
+                try:
+                    output_path = process_video(workflow_name, video_path, output_dir, config)
+                    if output_path:
+                        all_video_paths.append(output_path)
+                        print(f"✓ Video processing complete: {output_path}")
+                    else:
+                        print(f"✗ Failed to process video: {os.path.basename(video_path)} with workflow {workflow_name}")
+                except Exception as e:
+                    print(f"✗ ERROR processing video {os.path.basename(video_path)} with workflow {workflow_name}: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
         
-        # Create comparison grid and HTML table
-        if (all_output_paths and input_images) or (all_video_paths and input_videos):
-            if config['output']['create_grid'] and all_output_paths:
-                grid_path = create_comparison_grid(output_dir, all_output_paths, workflow_names, input_copies[:len(input_images)], config, timestamp)
-                print(f"\nComparison grid saved as: {grid_path}")
-            
-            if config['output']['create_html']:
-                html_path = create_html_table(output_dir, all_output_paths, workflow_names, 
-                                            input_copies[:len(input_images)], all_video_paths, workflow_copies, config, timestamp)
-                print(f"HTML table saved as: {html_path}")
+        print(f"\n=====================================")
+        print(f"Processing summary:")
+        print(f"- Processed {len(workflow_files)} workflows")
+        print(f"- Found {len(input_videos)} videos")
+        print(f"- Successfully generated {len(all_video_paths)} video outputs")
+        print(f"=====================================")
+        
+        # Create comparison grid and HTML table (skip if video-only mode is selected)
+        if not args.video_only:
+            if (all_output_paths and input_images) or (all_video_paths and input_videos):
+                if config['output']['create_grid'] and all_output_paths:
+                    grid_path = create_comparison_grid(output_dir, all_output_paths, workflow_names, input_copies[:len(input_images)], config, timestamp)
+                    print(f"\nComparison grid saved as: {grid_path}")
+                
+                if config['output']['create_html']:
+                    html_path = create_html_table(output_dir, all_output_paths, workflow_names, 
+                                                input_copies[:len(input_images)], all_video_paths, workflow_copies, config, timestamp)
+                    print(f"HTML table saved as: {html_path}")
+        
+        # Check if any outputs were produced
+        videos_dir = os.path.join(output_dir, config['directories']['output_subfolders']['videos'])
+        if os.path.exists(videos_dir):
+            video_count = len(os.listdir(videos_dir))
+            if video_count == 0:
+                print("\nWARNING: No output videos were produced!")
+                print("Please check the server connection and workflow configuration.")
         
         # Create zip archive of results
         zip_path = create_zip_archive(output_dir, timestamp)
