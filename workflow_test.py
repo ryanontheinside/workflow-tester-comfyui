@@ -649,8 +649,10 @@ def process_video(workflow_file, video_path, output_dir, config):
             height, width = first_frame.shape[:2]
             
             # Use the original video's FPS (or config fps as fallback)
-            output_fps = original_fps if original_fps > 0 else config['video']['fps']
-            print(f"Creating output video with {output_fps} FPS (matching source video)")
+            # Adjust FPS based on frame selection rate to maintain original playback speed
+            select_every_n = config['video']['select_every_n']
+            output_fps = (original_fps / select_every_n) if original_fps > 0 else config['video']['fps']
+            print(f"Creating output video with {output_fps} FPS (adjusted from source {original_fps} FPS based on frame selection rate of {select_every_n})")
             
             # Create video writer with H.264 codec for better browser compatibility
             try:
