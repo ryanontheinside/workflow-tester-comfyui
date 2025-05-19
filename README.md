@@ -12,6 +12,7 @@ Currently supports workflows that take a single image as input.
 - Support for video frame extraction and reconstruction
 - Automatic output organization with timestamped directories
 - Configurable settings via YAML
+- Intelligent FPS adjustment for video processing
 
 ## Directory Structure
 
@@ -50,6 +51,34 @@ The `config.yaml` file allows you to customize various aspects of the testing pr
 - Image processing settings
 - Workflow matching patterns
 - Output formatting options
+
+### Video Processing Configuration
+
+The video processing section in `config.yaml` allows fine control over how videos are processed:
+
+```yaml
+video:
+  max_frames: 100  # Maximum number of frames to process from each video
+  fps: 30  # Fallback FPS if original can't be determined
+  temp_dir: "temp_frames"  # Directory for temporary frame storage
+  select_every_n: 2  # Process every Nth frame (1 = all frames, 2 = every other frame, etc.)
+  skip_first_frames: 0  # Number of frames to skip at the start of the video
+```
+
+Key settings to understand:
+
+- **select_every_n**: Controls how many frames are sampled for processing
+  - Set to `1` to process every frame (slowest, highest quality)
+  - Set to `2` to process every other frame (half the processing time)
+  - Higher values skip more frames, making processing faster but potentially reducing quality
+  
+- **FPS Handling**: The tool automatically adjusts the output video's FPS based on the `select_every_n` setting:
+  - If processing every frame (`select_every_n: 1`), the original video's FPS is maintained
+  - If processing every Nth frame, the FPS is divided by N to maintain correct playback speed
+  - Example: If source video is 30 FPS and `select_every_n: 3`, output video will be 10 FPS
+  
+- **max_frames**: Limits the total number of frames processed from each video
+  - Useful for testing with longer videos without processing the entire file
 
 ## Usage
 
