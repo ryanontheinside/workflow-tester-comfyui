@@ -2,6 +2,8 @@
 server:
   url: "http://localhost:8188"
   timeout: 30  # seconds
+  restart_between_workflows: false  # Whether to restart the server between workflows
+  restart_timeout: 60  # Maximum time to wait for server to restart (seconds)
 
 # Directory configuration
 directories:

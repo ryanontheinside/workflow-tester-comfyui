@@ -16,6 +16,7 @@ import argparse
 import sys
 import shutil
 import base64
+import requests
 
 def load_config(config_path):
     """Load configuration from YAML file."""
@@ -502,9 +503,53 @@ def update_workflow_with_base64_image(workflow, image_path, base64_node_id):
     workflow[base64_node_id]['inputs']['image'] = base64_data
     return workflow
 
+def ensure_server_available(config):
+    """
+    Checks if the server is available and waits for it if not.
+    
+    Args:
+        config: The configuration dictionary containing server information
+        
+    Returns:
+        bool: True if server is available, False otherwise
+    """
+    # Get timeout from config with default of 60 seconds
+    timeout = config['server'].get('restart_timeout', 60)
+    check_interval = 5  # seconds between retry attempts
+    
+    # Calculate max attempts based on timeout and interval
+    start_time = time.time()
+    end_time = start_time + timeout
+    attempt = 1
+    
+    while time.time() < end_time:
+        try:
+            print(f"Checking server availability at {config['server']['url']}...")
+            urllib.request.urlopen(f"{config['server']['url']}", timeout=config['server']['timeout'])
+            print(f"✓ ComfyUI server is available")
+            return True
+        except Exception as e:
+            time_remaining = int(end_time - time.time())
+            if time_remaining <= 0:
+                print(f"✗ ERROR: Could not connect to ComfyUI server after {timeout} seconds")
+                print(f"  Error details: {str(e)}")
+                return False
+            
+            print(f"Server appears to be down. Waiting {check_interval} seconds before retry (attempt {attempt}, {time_remaining}s remaining)...")
+            time.sleep(min(check_interval, time_remaining))
+            attempt += 1
+    
+    print(f"✗ ERROR: Connection timeout after {timeout} seconds")
+    return False
+
 def process_workflow(workflow_file, image_path, output_dir, config):
     print(f"\nProcessing workflow: {workflow_file}")
     print(f"Using image: {image_path}")
+    
+    # Check if server is available before proceeding
+    if not ensure_server_available(config):
+        print(f"Skipping workflow {workflow_file} due to server unavailability")
+        return None
     
     # Load workflow
     prompt = load_workflow(workflow_file, config)
@@ -659,6 +704,13 @@ def process_video(workflow_file, video_path, output_dir, config):
         # Process each frame
         print("Processing frames through workflow...")
         for i, frame_path in enumerate(tqdm(frames)):
+            # Check server availability before processing each frame
+            if not ensure_server_available(config):
+                print(f"\nServer is down. Attempting to restart...")
+                if not restart_and_wait(config):
+                    print(f"ERROR: Could not restart server. Aborting video processing.")
+                    return None
+            
             try:
                 output_path = process_workflow(workflow_file, frame_path, output_dir, config)
                 if output_path:
@@ -667,6 +719,14 @@ def process_video(workflow_file, video_path, output_dir, config):
                     print(f"  Warning: Frame {i} processing returned no output")
             except Exception as e:
                 print(f"  Error processing frame {i}: {str(e)}")
+                # If we get an exception processing a frame, check if it's a server issue
+                if "Connection" in str(e) or "urlopen error" in str(e):
+                    print(f"Connection error detected. Checking server status...")
+                    if not ensure_server_available(config):
+                        print(f"Server is down. Attempting to restart...")
+                        if not restart_and_wait(config):
+                            print(f"ERROR: Could not restart server. Aborting video processing.")
+                            return None
         
         print(f"Successfully processed {len(processed_frames)}/{len(frames)} frames")
         
@@ -734,6 +794,86 @@ def is_video_file(file_path):
     video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.webm'}
     return os.path.splitext(file_path.lower())[1] in video_extensions
 
+def restart_server(config):
+    """
+    Attempts to restart the ComfyUI server using the manager reboot endpoint.
+    
+    Args:
+        config: The configuration dictionary containing server information
+        
+    Returns:
+        bool: True if restart was triggered successfully, False otherwise
+    """
+    try:
+        server_url = config['server']['url']
+        print(f"Triggering restart of ComfyUI server at {server_url}...")
+        response = requests.get(f"{server_url}/manager/reboot")
+        return response.status_code == 200
+    except requests.exceptions.RequestException as e:
+        print(f"Error triggering server restart: {str(e)}")
+        return False
+
+def get_server_status(config):
+    """
+    Gets the current server status using the system_stats endpoint.
+    
+    Args:
+        config: The configuration dictionary containing server information
+        
+    Returns:
+        dict or None: Server status information if available, None if server is down
+    """
+    try:
+        server_url = config['server']['url']
+        response = requests.get(f"{server_url}/system_stats")
+        if response.status_code == 200:
+            return response.json()
+    except requests.exceptions.RequestException:
+        pass
+    return None
+
+def wait_for_server(config, timeout=60, check_interval=1):
+    """
+    Waits for the ComfyUI server to be available after a restart.
+    
+    Args:
+        config: The configuration dictionary containing server information
+        timeout (int): Maximum time to wait in seconds
+        check_interval (int): How often to check in seconds
+        
+    Returns:
+        bool: True if server is up, False if timeout reached
+    """
+    start_time = time.time()
+    print(f"Waiting for server to come back online (timeout: {timeout} seconds)...")
+    while time.time() - start_time < timeout:
+        if get_server_status(config) is not None:
+            print("✓ Server is back online!")
+            return True
+        time.sleep(check_interval)
+        print(".", end="", flush=True)
+    print("✗ Server restart timed out!")
+    return False
+
+def restart_and_wait(config):
+    """
+    Restarts the server and waits for it to come back up.
+    
+    Args:
+        config: The configuration dictionary containing server information
+        
+    Returns:
+        bool: True if server was successfully restarted and is back up, False otherwise
+    """
+    timeout = config['server'].get('restart_timeout', 60)  # Default to 60s if not specified
+    
+    if not restart_server(config):
+        print("✗ Failed to trigger server restart")
+        return False
+    
+    print("Restart triggered, waiting for server to come back online...")
+    return wait_for_server(config, timeout)
+
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Process workflows with images and videos')
@@ -751,14 +891,10 @@ def main():
     print(f"Timeout: {config['server']['timeout']} seconds")
     
     # Test server connection
-    try:
-        print(f"Testing connection to ComfyUI server...")
-        urllib.request.urlopen(f"{config['server']['url']}", timeout=config['server']['timeout'])
-        print(f"✓ Successfully connected to ComfyUI server")
-    except Exception as e:
-        print(f"✗ ERROR: Could not connect to ComfyUI server at {config['server']['url']}")
-        print(f"  Error details: {str(e)}")
-        print(f"  Make sure ComfyUI is running before using this tool.")
+    server_available = ensure_server_available(config)
+    if not server_available and not args.html_only:
+        print(f"ERROR: Unable to connect to ComfyUI server at {config['server']['url']}")
+        print(f"Make sure ComfyUI is running before using this tool, or use --html-only option.")
         return
     
     if args.html_only:
@@ -855,9 +991,18 @@ def main():
         all_video_paths = []
         workflow_names = []
         
-        for workflow_file in workflow_files:
+        # Check if server restart is enabled
+        restart_between_workflows = config['server'].get('restart_between_workflows', False)
+        if restart_between_workflows:
+            print(f"Server restart between workflows is ENABLED")
+        
+        for i, workflow_file in enumerate(workflow_files):
             workflow_name = os.path.basename(workflow_file)
             workflow_names.append(workflow_name)
+            
+            print(f"\n=====================================")
+            print(f"Processing workflow {i+1}/{len(workflow_files)}: {workflow_name}")
+            print(f"=====================================")
             
             # Process images (skip if video-only mode is selected)
             if not args.video_only and input_images:
@@ -883,6 +1028,14 @@ def main():
                     print(f"✗ ERROR processing video {os.path.basename(video_path)} with workflow {workflow_name}: {str(e)}")
                     import traceback
                     traceback.print_exc()
+            
+            # Restart server if enabled and not the last workflow
+            if restart_between_workflows and i < len(workflow_files) - 1:
+                print(f"\nRestarting ComfyUI server before next workflow...")
+                if restart_and_wait(config):
+                    print(f"✓ Server successfully restarted. Continuing with next workflow.")
+                else:
+                    print(f"✗ Server restart failed. Attempting to continue with next workflow...")
         
         print(f"\n=====================================")
         print(f"Processing summary:")
